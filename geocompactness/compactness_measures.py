@@ -124,6 +124,9 @@ def schwartzberg(geo, inverse = True, geo_cell = None):
     
     Keyword arguments:
         geo -- GeoSeries or GeoDataFrame
+        inverse -- Boolean, return the original (1 to infinity) Schwartzberg,
+            or the inverse (0 to 1); most analysts use the inverse, so this
+            function defaults to inverse = True
         geo_cell -- GeoSeries or GeoDataFrame representing units used to build
             geo (the "container"); does not have to nest cleanly
     """
