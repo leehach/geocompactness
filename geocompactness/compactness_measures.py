@@ -8,7 +8,7 @@ components of compactness measures, in Euclidean space. Recommended usage
 
 import geopandas as gpd
 import pandas as pd
-from math import pi
+from math import pi, sqrt
 from geocompactness.smallest_enclosing_circle import make_circle
 
 def _discrete_perimeter(geo, geo_cell):
@@ -63,7 +63,7 @@ def perimeter(geo, geo_cell = None, gross = False):
     blocks" of the first, larger geography.
     """
 
-    if geo_cell == None:
+    if geo_cell is None:
         # Continuous perimeter
         return _continuous_perimeter(geo)
     elif gross:
@@ -97,7 +97,7 @@ def area(geo, geo_cell = None, convex_hull = False):
     blocks" of the first, larger geography.
     """
 
-    if geo_cell == None:
+    if geo_cell is None:
         # Continuous area
         if convex_hull:
             return _continuous_area(geo.convex_hull)
@@ -211,10 +211,43 @@ def _moment_of_inertia(pts):
 
     return abs(a**2 / (2 * pi * mi))
 
-def _discrete_moment_of_inertia():
+def _discrete_moment_of_inertia(geo, geo_cell = None, wt = 1):
     """Not implemented"""
+
+    # Copy geo_cell so that it is not modified during function    
+    tmp = geo_cell[[wt, geo_cell.geometry.name]].copy()
     
-    return None
+    # Calculate area of each cell, used later
+    tmp["dA"] = geo_cell.area
+    
+    # Assign container ID using representative point, since centroid of small
+    # geometry may fall outside the geometry, and therefore outside the container
+    # for small geometries near edge of container
+    tmp.geometry = geo_cell.representative_point()
+    tmp.crs = geo_cell.crs # For some reason representative_point() destroys CRS, reassign it
+    tmp = gpd.sjoin(tmp, geo[[geo.geometry.name]]) # After sjoin, order of GeoDataFrame changes. Index is preserved.
+
+    # Replace representative point with centroid, which is needed for MI
+    tmp.geometry = geo_cell.centroid
+
+    # Calculate population-weighted centroid of each container geo
+    # index_right refers to index of each feature in container
+    cx = tmp.groupby("index_right").apply(lambda row: (row.geometry.x * row[wt]).sum() / row[wt].sum()).rename("cx")
+    cy = tmp.groupby("index_right").apply(lambda row: (row.geometry.y * row[wt]).sum() / row[wt].sum()).rename("cy")
+    tmp = tmp.merge(cx, on = "index_right").merge(cy, on = "index_right")
+    
+    # Calculate moment of inertia of each container geo
+    tmp["centroid_distance"] = ((tmp.geometry.x - tmp["cx"])**2 + (tmp.geometry.y - tmp["cy"])**2).apply(sqrt)
+    mi = tmp.groupby("index_right").apply(lambda row: (row.centroid_distance**2 * row[wt]).sum()).rename("mi")
+    
+    # Calculate radius of circle with same area as geo
+    circle_mi = tmp.groupby("index_right").apply(lambda row: row[wt].sum() * row["dA"].sum() / (2 * pi))
+    
+    # Calculate compactness as ratio of MI of circle with same area and equal mass distribution to MI of container
+    c_mi = circle_mi / mi
+    c_mi.rename("c_mi", inplace = True)
+      
+    return c_mi
     
 def moment_of_inertia(geo, geo_cell = None, wt = 1):
     """
@@ -238,7 +271,7 @@ def moment_of_inertia(geo, geo_cell = None, wt = 1):
     from 0 (least compact) to 1 (most compact, a circle).
     """
     
-    if geo_cell == None:
+    if geo_cell is None:
         moments = []    
         for geom in geo.geometry:
             
@@ -247,4 +280,11 @@ def moment_of_inertia(geo, geo_cell = None, wt = 1):
         return pd.Series(moments)
     else:
         
-        return _discrete_moment_of_inertia()
+        # wt is int or float, repeat value in "wt" column
+        if type(wt) in [int, float, tuple, list, pd.Series]:
+            geo_cell["wt"] = wt
+            wt = "wt"
+
+        return _discrete_moment_of_inertia(geo, geo_cell, wt)
+    
+        
