@@ -24,3 +24,5 @@ There is an extensive literature on geographic compactness measures, in general 
 * Horn et al. (1993) - "Practical application of district compactness"
 
 This literature is somewhat fractured, and the same measures or very similar measures have often been rediscovered, and may be referred to by different names in different disciplines. The surveys above represent work by geographers (MacEachran 1985; Horn et al. 1993), legal scholars (Young 1988), and political scientists (Niemi et al. 1990).
+
+Note that so far, this project has not given much thought to efficiency and speed in calculating the compactness measures. Analysts constructing large numbers of districts from building block geometries (for example, using Monte Carlo simulation) may want want to look at MGGG's GerryChain project (<https://github.com/mggg/GerryChain>). The approach of this project is to calculate the compactness at each step of the Markov Chain by determining the differential change of adding or subtracting a small number of building block geometries.

@@ -251,21 +251,21 @@ def _discrete_moment_of_inertia(geo, geo_cell = None, wt = 1):
     
 def moment_of_inertia(geo, geo_cell = None, wt = 1):
     """
-    Returns moment of intertia shape index (MacEachren 1985; Li, et al. 2013) of geo as float
+    Returns moment of inertia shape index (MacEachren 1985; Li, et al. 2013) of geo as float
     
     Keyword arguments:
         geo -- GeoSeries or GeoDataFrame
         geo_cell -- GeoSeries or GeoDataFrame representing units used to build
             geo (the "container"); does not have to nest cleanly
         wt -- Int, float, or str: The weight of the unit (e.g. population
-            count) in the moment of intertia calculation; this is either a
+            count) in the moment of inertia calculation; this is either a
             number applied as the weight of every unit, or the name of a 
             column in geo_cell with weights; if you want the units weighted
             by area, do not supply values for geo_cell or wt
             
-    The moment of intertia of a shape changes as the shape is translated in
+    The moment of inertia of a shape changes as the shape is translated in
     coordinate space. The moment of inertia about the centroid is the 
-    minimum moment of intertia for a given shape. The MI of a circle of the
+    minimum moment of inertia for a given shape. The MI of a circle of the
     same area as the shape is divided by the MI of the shape to convert to a 
     "shape index". As with other compactness measures, the final value varies
     from 0 (least compact) to 1 (most compact, a circle).
