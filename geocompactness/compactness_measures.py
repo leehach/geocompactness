@@ -10,6 +10,7 @@ import geopandas as gpd
 import pandas as pd
 from math import pi, sqrt
 from geocompactness.smallest_enclosing_circle import make_circle
+from shapely.geometry.polygon import orient
 
 def _discrete_perimeter(geo, geo_cell):
     """Not implemented"""
@@ -154,41 +155,19 @@ def reock(geo):
     mbc_area = geo.convex_hull.apply(lambda x: pi * make_circle(list(x.exterior.coords))[2] ** 2)
     return geo.area / mbc_area
 
-def _moments(pts):
-    
-    if pts[0] != pts[-1]:
-        pts = pts + pts[:1]
-    x = [ c[0] for c in pts ]
-    y = [ c[1] for c in pts ]
-    sxx = syy = sxy = 0
-    for i in range(len(pts) - 1):
-        sxx += (y[i]**2 + y[i]*y[i+1] + y[i+1]**2) * (x[i]*y[i+1] - x[i+1]*y[i])
-        syy += (x[i]**2 + x[i]*x[i+1] + x[i+1]**2) * (x[i]*y[i+1] - x[i+1]*y[i])
-        sxy += (x[i]*y[i+1] + 2*x[i]*y[i] + 2*x[i+1]*y[i+1] + x[i+1]*y[i]) * (x[i]*y[i+1] - x[i+1]*y[i])
-
-    a = coords_area(pts)
-    print(a)
-    
-    cx, cy = coords_centroid(pts)
-    print(cx, cy)
-    
-    return (sxx/12 - a*cy**2) + (syy/12 - a*cx**2)
-
-    # return sxx, syy, sxy
-
-def _moment_of_inertia(pts):
-    """Returns the normalized (circle = 1) moment of inertia of a shape
+def _polar_moment_of_area(pts, centroid = None):
+    """Returns the polar moment of area of a shape
     
     Keyword arguments:
         pts -- Iterable of tuples containing xy coordinate pairs of points
             that define a closed linear ring (i.e. a polygon boundary)
-          
+    
+    The polar moment of area is the sum of the second moment of area with 
+    respect to the x-axis (I_x) and the y-axis (I_y). The moments are 
+    calculated with respect to the centroid of the shape.
+    
     Adapted from https://leancrew.com/all-this/2018/01/python-module-for-section-properties/
     """
-    
-    # Not required as we will always be passing closed linear rings
-    #if pts[0] != pts[-1]:
-    #    pts = pts + pts[:1]
     
     x = [ c[0] for c in pts ]
     y = [ c[1] for c in pts ]
@@ -206,13 +185,32 @@ def _moment_of_inertia(pts):
         # sxy += (x[i]*y[i+1] + 2*x[i]*y[i] + 2*x[i+1]*y[i+1] + x[i+1]*y[i])*(x[i]*y[i+1] - x[i+1]*y[i])
 
     a = s/2
-    cx, cy = sx/(6*a), sy/(6*a)
+    if centroid:
+        cx, cy = centroid[0], centroid[1]
+    else:
+        cx, cy = sx/(6*a), sy/(6*a)
+
     mi = (sxx/12 - a*cy**2) + (syy/12 - a*cx**2)  
 
-    return abs(a**2 / (2 * pi * mi))
+    return mi
 
-def _discrete_moment_of_inertia(geo, geo_cell = None, wt = 1):
-    """Not implemented"""
+def _mass_moment_of_inertia(geo, geo_cell, wt):
+    """
+    Returns the mass moment of inertia of a shape
+    
+    Keyword arguments:
+        geo -- GeoSeries or GeoDataFrame
+        geo_cell -- GeoSeries or GeoDataFrame representing units used to build
+            geo (the "container"); does not have to nest cleanly
+        wt -- Str: Name of column in geo_cell to use as the weight of the unit 
+            (e.g. population count) in the moment of inertia calculation
+    
+    Each geo_cell is assigned to a container geo based on a representative point,
+    a point guaranteed to be in geo_cell. The mass of each geo_cell is assumed
+    to fall at its centroid. If geo_cell does not nest cleanly (that is, it 
+    overlaps neighboring geos), the mass is is nonetheless assigned entirely to
+    one container geo.
+    """
 
     # Copy geo_cell so that it is not modified during function    
     tmp = geo_cell[[wt, geo_cell.geometry.name]].copy()
@@ -267,17 +265,61 @@ def moment_of_inertia(geo, geo_cell = None, wt = 1):
     coordinate space. The moment of inertia about the centroid is the 
     minimum moment of inertia for a given shape. The MI of a circle of the
     same area as the shape is divided by the MI of the shape to convert to a 
-    "shape index". As with other compactness measures, the final value varies
-    from 0 (least compact) to 1 (most compact, a circle).
+    "shape index".
+    
+    When geo_cell is missing, the value calculated is knowsn as the "area 
+    moment of inertia" or "second moment of area". It is calculated from the
+    polygon coordinates. As with other compactness measures, the final value 
+    varies from 0 (least compact) to 1 (most compact, a circle).
+    
+    When geo_cell is supplied, the value calculated is the "mass moment of
+    inertia" or, simply, the "moment of inertia". In this case each cell
+    is weighted by some value, specified by the parameter wt. For demographic
+    data, the "mass" will usually be the cell population. if the mass is the 
+    cell area, this is equivalent to the second moment of inertia, and geo_cell
+    should just be omitted. Importanly, in calculating the shape index, the 
+    reference circle has the same area of the shape *and uniform density*.
+    Therefore, unlike most other compactness measures, this shape index is *not* 
+    constrained to be between 0 and 1. If the shape has mass (population)
+    concentrated near the center of the shape, the shape can be more compact
+    than the reference circle, and the return value will be greater than 1.
     """
     
     if geo_cell is None:
-        moments = []    
+
+        # Initialize list to hold moments of inertia
+        moments = []
+        
+        # Iterate geometry, which may be a multipolygon
         for geom in geo.geometry:
             
-            moments.append(_moment_of_inertia(geom.exterior.coords))
+            # Initialize moment of inertia
+            mi = 0
+            
+            # Find centroid of geom, possibly multipolygon
+            centroid = (geom.centroid.x, geom.centroid.y)
+            
+            # geom will contain one or more polygons
+            for poly in geom:
+
+                # Give polygon positive orientation (clockwise(?)) so moment
+                # of inertia is positive and holes are negative
+                poly = orient(poly, sign = 1)
+                                
+                # Add moment of inertia for exterior points of polygon
+                mi += _polar_moment_of_area(poly.exterior.coords, centroid)           
+                for interior in poly.interiors:
+                    
+                    # Subtract moment of inertia for each hole in polygon
+                    mi += _polar_moment_of_area(interior.coords, centroid)
+                        
+            # Convert to shape index by comparing to circle of equal area
+            compactness_mi = geom.area**2 / (2 * pi * mi)
+            
+            moments.append(compactness_mi)
+            
+        return pd.Series(moments, index = geo.index)
     
-        return pd.Series(moments)
     else:
         
         # wt is int or float, repeat value in "wt" column
@@ -285,6 +327,6 @@ def moment_of_inertia(geo, geo_cell = None, wt = 1):
             geo_cell["wt"] = wt
             wt = "wt"
 
-        return _discrete_moment_of_inertia(geo, geo_cell, wt)
+        return _mass_moment_of_inertia(geo, geo_cell, wt)
     
         
